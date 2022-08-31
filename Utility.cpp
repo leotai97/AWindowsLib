@@ -119,7 +119,7 @@ int String::LastIndexOf(wchar_t const chr) const
 
 int String::LastIndexOf(String const &str) const
 {
- int i,c;
+ int i,c, len;
 
  if (str.Length()==0)
    return -1;
@@ -127,7 +127,9 @@ int String::LastIndexOf(String const &str) const
  if (str.Length() > Length())
    return -1; 
 
- c=Length() - (str.Length()-1);
+ len = Length();
+
+ c=len - (str.Length());
 
  for(i=c;i>=0;i--)
   {
@@ -1180,6 +1182,29 @@ bool Utility::DirectoryCreate(String const &path, bool bShowError)
  return true;
 }
 
+String Utility::DirectoryName(String const &pathIn)
+{
+ String name, path;
+ int i;
+
+ if (pathIn.Length() == 0) 
+   return path;
+
+ if (pathIn.Substring(pathIn.Length() - 1, 1) == L"\\")
+   path = pathIn.Substring(0, pathIn.Length()-1);
+ else
+   path = pathIn;
+
+ i = path.LastIndexOf(L"\\");
+ if (i < 0)
+   return path;
+
+ name = path.Substring(i+1);
+
+ return name;
+}
+
+
 std::vector<String> Utility::GetFileNames(String const &dir, String const &filter)
 {
  WIN32_FIND_DATA data;
@@ -1734,7 +1759,7 @@ void AFileTextOut::Close()
 void AFileTextOut::Write(String const &line) // writing old ASCII 
 {
  BOOL wr;
- DWORD bw, rLen;
+ DWORD bw;
  char *buffer;
  int i, len;
 
@@ -1905,7 +1930,6 @@ std::vector<String> AFileTextIn::ReadAll()
  std::vector<String> lines;
  String line;
  wchar_t wchr, lastWChr;
- BOOL rr;
  bool eof, gotChr;
 
  eof = false;
@@ -2051,7 +2075,6 @@ bool LocalOptions::Save()
 {
  AFileOut file;
  String path;
- int i;
 
  path = OpenFileDlg::AppDataFolder();
  path += L"\\";

@@ -151,7 +151,6 @@ void Application::SetClipboardText(String const &val)
 String Application::GetClipboardText()
 {
  String out;
- HGLOBAL hglbCopy;
  HANDLE hData;
  wchar_t *pText;
  char *pAscii; 
@@ -1084,7 +1083,6 @@ MenuItem *MenuItem::SubMenu(int id, String const &txt)
 MenuItem *MenuItem::FindSubMenu(int childId)
 {
  MenuItem *sub;
- int pos;
 
  if (Index.count(childId) > 0)
    return this;
@@ -1104,7 +1102,6 @@ MenuItem *MenuItem::FindSubMenu(int childId)
 
 String MenuItem::WalkMenuTree(int childId)
 {
- MenuItem *sub;
  String txt, stxt, empty;
 
  if (m_MenuText.Length() > 0)
@@ -1378,7 +1375,6 @@ int AMenu::GetItemParam(int id)
 {
  MenuItem *sub;
  MENUITEMINFO item={0};
- UINT flags;
  int pos;
 
  sub = FindSubMenu(id);
@@ -1400,7 +1396,6 @@ void AMenu::SetItemParam(int id, int param)
 {
  MenuItem *sub;
  MENUITEMINFO item={0};
- UINT flags;
  int pos;
 
  sub = FindSubMenu(id);
@@ -3216,6 +3211,7 @@ BOOL CALLBACK ADialogEnumChildProc(HWND hWnd, LPARAM lParam)
 
 void ADialog::OnInitDialog()
 {
+ HWND hCWnd;
  String txt;
  Rect pr;
  Size sz;
@@ -3240,11 +3236,18 @@ void ADialog::OnInitDialog()
  for (const auto &hWnd : m_ChildList)
   {
    id = GetDlgCtrlID(hWnd);
-   if (AWndApp->Prose.ReverseKeys.count(id) > 0)
+   if (id != 0)
     {
-     txt = AWndApp->Prose.Text(id);
-     if (txt.Length() > 0)
-       ::SetDlgItemText(m_hWnd, id, txt.Chars());  
+     hCWnd = GetDlgItem(m_hWnd, id);
+     if (hCWnd != 0)
+      {
+       if (AWndApp->Prose.ReverseKeys.count(id) > 0)
+        {
+         txt = AWndApp->Prose.Text(id);
+         if (txt.Length() > 0)
+           ::SetDlgItemText(m_hWnd, id, txt.Chars());  
+        }
+      }
     }
   }
 }
@@ -4146,12 +4149,30 @@ bool ADropList::IsItemSelected()
 
 ///////////////////////////////////////////////////////////////
 
-WaitCursor::WaitCursor()
+WaitCursor::WaitCursor(WaitStyle ws)
 {
- m_CurrentCursor = ::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+ if (ws == WaitStyle::WaitNow)
+   m_CurrentCursor = ::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+ else
+   m_CurrentCursor = 0;
 }
 
 WaitCursor::~WaitCursor()
 {
- ::SetCursor(m_CurrentCursor);
+ EndWait();
+}
+
+void WaitCursor::BeginWait()
+{
+ if (m_CurrentCursor == 0)
+   m_CurrentCursor = ::SetCursor(::LoadCursor(NULL, IDC_WAIT));
+}
+
+void WaitCursor::EndWait()
+{
+ if (m_CurrentCursor != 0)
+  {
+   ::SetCursor(m_CurrentCursor);
+   m_CurrentCursor = 0;
+  }
 }

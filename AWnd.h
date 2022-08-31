@@ -701,6 +701,7 @@ class TreeNode
  TreeNode(TreeNode const &node);
 
  inline TreeNode *Parent() const { return m_Parent; }
+ inline HTREEITEM ParentHandle() { return m_hParent; }
  inline HTREEITEM Handle() const { return m_hItem; }
  inline HWND ViewHandle() const { return m_hWnd; }
  inline bool IsRoot() { return m_hParent == TVI_ROOT; }
@@ -1039,8 +1040,13 @@ class ADropList : public AWnd
 class WaitCursor
 {
  public:
- WaitCursor();
-~WaitCursor();
+ enum class WaitStyle : int { WaitNow, WaitLater };
+
+ WaitCursor(WaitStyle ws);
+~WaitCursor();                 // destructor will restore original cursor
+
+ void BeginWait();
+ void EndWait();
 
  protected:
 

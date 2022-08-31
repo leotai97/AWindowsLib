@@ -190,7 +190,8 @@ class Utility
  static bool FileExists(String const &path);
  static bool DirectoryExists(String const &path);
  static bool DirectoryCreate(String const &path, bool bShowError);
- 
+ static String DirectoryName(String const &path); 
+
  static std::vector<String> GetFileNames(String const &directory, String const &filter);
  static std::vector<String> GetFolderNames(String const &directory);
  

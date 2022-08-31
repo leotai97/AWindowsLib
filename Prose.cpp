@@ -329,7 +329,7 @@ bool ProseUnit::Save()
   }
 
  text.Write(L"// Prose Multi-Language Key Definition Header File");
- text.Write();
+ text.Write(L"// Unfortunately any resource.h IDs used in Prose must be unique ADialog::OnInitDialog() uses them");
  text.Write(L"// Add task to copy runtime file ProseData.dat to Debug and Release directories");
  text.Write(L"// Call static function ProseRuntimeClass::LoadReverseKeys() prior to obtaining a text item string");
  text.Write();
@@ -478,6 +478,7 @@ String ProseUnit::TextArgs(int id, String const &t1, String const &t2, String co
            out += args[pmi - 1];
         }
        out += chr; // append the chr that was not a #
+       pm.Clear();
       }
     }
    else
