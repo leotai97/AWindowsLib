@@ -195,7 +195,7 @@ MouseEventArgs::MouseEventArgs(HWND hWnd, WPARAM wParam, LPARAM lParam, DoubleCl
  GetCursorPos(&pt);
  ScreenToClient(hWnd, &pt);
  
- X = pt.x; // GET_X_LPARAM(lParam);
+ X = pt.x; // GET_X_LPARAM(lParam);  why didn't I use these macros?
  Y = pt.y; // GET_Y_LPARAM(lParam);
   
 

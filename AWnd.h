@@ -53,6 +53,11 @@ class Application
  inline PopUpWnd *GetMain() { return m_Main; }
  inline bool DarkMode() { return m_DarkMode; }
 
+ static Color GetSystemColor(int syscolor); // adds 0xff alpha
+
+ static std::vector<BYTE> Encrypt(String const &plain);
+ static String Decrypt(std::vector<BYTE> const &encrypted);
+
  inline void AddCustomClass(String const &className) { m_CustomClasses.push_back(className); }
 
  ProseUnit Prose;
@@ -131,6 +136,9 @@ class AWnd  // windows controls
  void SetPoint(Point const &r);
  virtual void SetSize(Size const &sz);
  virtual void SetRect(Rect const &r);
+
+ SizeF MeasureString(String const &val, Gdiplus::Font *font);
+ SizeF MeasureString(String const &val, HFONT hFont);
 
  void Border(bool onoff);
  bool HasBorder();
@@ -387,10 +395,13 @@ class PanelWnd : public AWnd
  virtual WMR  OnCommand(int id, HWND hCtrl) { return WMR::Default; } // true if handled
  virtual void OnSize(){};
  virtual void OnMouseDown(MouseEventArgs const &e){};
+ virtual void OnMouseWheel(MouseEventArgs const &e){};
  virtual void OnPanelClick(HWND hWnd, MouseEventArgs const &e){};
  virtual void OnTimer(int timerID){};
  virtual WMR  OnNotify(HWND hChild, int child, UINT code, LPARAM lParam) { return WMR::Default; }
  virtual WMR  OnContextMenu(HWND hChild, Point const &pt) { return WMR::Default; }
+
+ void DrawRectangle(HDC hDC, HPEN hPen, int x, int y, int w, int h);
 
  void DrawBorder(HDC hDC);
 
@@ -816,6 +827,7 @@ class ADialog : public AWnd
  virtual void OnItemClick(int child, MouseEventArgs const &m){};
  virtual void OnMouseDown(MouseEventArgs const &m){};
  virtual void OnMouseMove(MouseEventArgs const &m){};
+ virtual void OnMouseWheel(MouseEventArgs const &m){};
  virtual void OnKeyDown(KeyEventArgs const &k){};
  virtual void OnKeyDown(int child, KeyEventArgs const &k){};
  virtual void OnTimer(int timerID){};
@@ -863,6 +875,8 @@ class StatusBarPane
 
 // void Paint(DRAWITEMSTRUCT *dis);
 
+ void Clear();
+
  protected:
 
  Content m_Content;
@@ -902,6 +916,8 @@ class StatusBar : public AWnd
  void OnSize(Rect const &r);  // parent size has changed, need to resize
 
  virtual void OnDrawItem(DRAWITEMSTRUCT *dis);
+
+ void Clear(int panel);
 
  protected:
 
@@ -950,10 +966,13 @@ class ImageList
  void Create(Style style, int width, int height, int initalSize);
  void Add(Bitmap *bmp, int pictureID);
  void AddMasked(int bmpID, COLORREF mask); 
+ void Replace(Bitmap *bmp, int pictureID);
  void Destroy();
  void AddClient(AWnd *wnd) { Clients.push_back(wnd); }
  int GetIndex(int pictureID);
  HICON GetIcon(int index);
+
+ void Paint(HDC hDC, int image, int x, int y);
 
  protected:
 
@@ -1051,4 +1070,35 @@ class WaitCursor
  protected:
 
  HCURSOR m_CurrentCursor;
+};
+
+/////////////////////////////////////////////
+
+class ScrollBar : public AWnd
+{
+ public:
+
+ enum class Orientation : int { Horz, Vert };
+
+ void Create(AWnd *parent, Orientation orient);
+ void Attach(ADialog *parent, int childID, Orientation orient);
+
+ void SetRange(int min, int max);
+ void SetPageAmount(int pageScrollAmount);
+
+ int GetPosition(WPARAM wParam);
+ void SetPosition(WPARAM wParam, int newPosition);
+ int GetCurrentPosition();
+
+ int PageUp();
+ int PageDown();
+ int LineUp(int amount);
+ int LineDown(int amount);
+
+ protected:
+
+ int CalcPosition(WPARAM wParam);
+
+ Orientation m_Orient;
+
 };

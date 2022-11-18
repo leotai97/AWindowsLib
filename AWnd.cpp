@@ -18,8 +18,8 @@ Application::Application()
  String plain = L"test";
  String decrypted;
 
- encrypted = Utility::Encrypt(plain);
- decrypted = Utility::Decrypt(encrypted); 
+ encrypted = Application::Encrypt(plain);
+ decrypted = Application::Decrypt(encrypted); 
 
  if (plain != decrypted)
    throw L"encryption decrypion failed";
@@ -35,6 +35,7 @@ bool Application::Init(HINSTANCE hInst, int nCmdShow, String const &appName, Str
 {
  INITCOMMONCONTROLSEX cmcs={0};
  GdiplusStartupInput gdiplusStartupInput;
+ String err;
  wchar_t *name;
  DWORD szName;
 
@@ -47,8 +48,12 @@ bool Application::Init(HINSTANCE hInst, int nCmdShow, String const &appName, Str
  m_AppLocalPath += m_AppName;
  if (Utility::DirectoryExists(m_AppLocalPath) == false)
   {
-   if (Utility::DirectoryCreate(m_AppLocalPath, true) == false)
+   err = Utility::DirectoryCreate(m_AppLocalPath);
+   if (err.Length() > 0)
+    {
+     Response(err);
      return false;
+    }
   }
 
  ::GdiplusStartup(&m_gdiplusToken, &gdiplusStartupInput, NULL);
@@ -322,6 +327,220 @@ void Application::RemoveChildWnd(HWND hWnd)
  m_ChildWindows.erase(hWnd);
 }
 
+Color Application::GetSystemColor(int syscolor) // adds 0xff alpha
+{
+ DWORD c = ::GetSysColor(syscolor);
+ int a,r,g,b;
+
+ r=GetRValue(c);
+ g=GetRValue(c);
+ b=GetRValue(c);
+ a=0xff;
+ return Color(a,r,g,b);
+}
+
+static const BYTE rgbIV[] =
+{
+    0xF1, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+    0x08, 0x09, 0x0A, 0x0B, 0xAD, 0x0D, 0x0E, 0x0F
+};
+
+static const BYTE rgbAES128Key[] =
+{
+    0x00, 0x01, 0x02, 0x03, 0x04, 0xB5, 0x06, 0x07, 
+    0x08, 0xC7, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F
+};
+
+std::vector<BYTE> Application::Encrypt(String const &plain)
+{
+ BCRYPT_ALG_HANDLE hAesAlg;
+ BCRYPT_KEY_HANDLE hKey;
+ DWORD cbKeyObject, cbData, cbBlockLen, cbPlainText, cbCipherText;
+ BYTE *pbKeyObject, *pbIV, *plainBuff, *pbPlainText, *pbCipherText;
+ NTSTATUS ret;
+ std::vector<BYTE> output;
+ int nLen;
+
+ nLen = plain.Length() * sizeof(wchar_t);
+ if (nLen==0)
+   return output;
+
+ plainBuff = new BYTE[nLen];
+ memcpy(plainBuff, plain.Chars(), nLen);
+
+ ret = BCryptOpenAlgorithmProvider(&hAesAlg, BCRYPT_AES_ALGORITHM, NULL, 0);
+ if (ret < 0)
+   throw L"failed";
+
+ ret = BCryptGetProperty(hAesAlg, BCRYPT_OBJECT_LENGTH, (PBYTE)&cbKeyObject, sizeof(DWORD), &cbData, 0); 
+ if (ret < 0)
+   throw L"failed";
+
+ pbKeyObject = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbKeyObject);
+ if (pbKeyObject == nullptr)
+   throw L"failed";
+
+ ret = BCryptGetProperty(hAesAlg, BCRYPT_BLOCK_LENGTH, (PBYTE)&cbBlockLen, sizeof(DWORD), &cbData, 0);
+ if (ret < 0)
+   throw L"failed";
+
+ if (cbBlockLen > sizeof (rgbIV))
+   throw L"failed";
+
+ pbIV = (PBYTE) HeapAlloc (GetProcessHeap (), 0, cbBlockLen);
+  if(pbIV == nullptr)
+    throw L"faied";
+ 
+ memcpy(pbIV, rgbIV, cbBlockLen);
+
+ ret = BCryptSetProperty(hAesAlg, BCRYPT_CHAINING_MODE, (PBYTE)BCRYPT_CHAIN_MODE_CBC, sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
+ if (ret < 0) 
+   throw L"failed";
+
+ ret = BCryptGenerateSymmetricKey(hAesAlg, &hKey, pbKeyObject, cbKeyObject, (PBYTE)rgbAES128Key, sizeof(rgbAES128Key), 0);
+ if (ret < 0)
+   throw L"failed";
+
+ cbPlainText = nLen;
+ pbPlainText = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbPlainText);
+ if (pbPlainText == nullptr)
+   throw L"failed";
+
+ memcpy(pbPlainText, plainBuff, nLen);
+
+ ret = BCryptEncrypt(hKey, pbPlainText, cbPlainText, NULL, pbIV, cbBlockLen, NULL, 0, &cbCipherText, BCRYPT_BLOCK_PADDING);
+ if (ret < 0)
+   throw L"failed";
+
+ pbCipherText = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbCipherText);
+ if(pbCipherText == nullptr)
+   throw L"failed";
+ 
+ ret = BCryptEncrypt(hKey, pbPlainText, cbPlainText, NULL, pbIV, cbBlockLen, pbCipherText, cbCipherText, &cbData, BCRYPT_BLOCK_PADDING);
+ if (ret < 0)
+   throw L"failed";
+
+ for (DWORD i=0;i<cbCipherText;i++)
+  {
+   output.push_back(pbCipherText[i]);
+  }
+
+ if (hAesAlg)
+   BCryptCloseAlgorithmProvider(hAesAlg,0);
+    
+ if (hKey)    
+   BCryptDestroyKey(hKey);
+    
+
+ if (pbCipherText)
+   HeapFree(GetProcessHeap(), 0, pbCipherText);
+   
+ if (pbPlainText)
+   HeapFree(GetProcessHeap(), 0, pbPlainText);
+    
+ if (pbKeyObject)
+   HeapFree(GetProcessHeap(), 0, pbKeyObject);
+
+ if (pbIV)
+  HeapFree(GetProcessHeap(), 0, pbIV);
+
+ if (plainBuff)
+   delete [] plainBuff;
+
+ return output;
+}
+
+String Application::Decrypt(std::vector<BYTE>const &encrypted)
+{
+ BCRYPT_ALG_HANDLE hAesAlg;
+ BCRYPT_KEY_HANDLE hKey;
+ DWORD cbKeyObject, cbData, cbBlockLen, cbPlainText, cbCipherText, ic;
+ BYTE *pbKeyObject, *pbIV, *pbPlainText, *pbCipherText;
+ wchar_t *outputBuff;
+ NTSTATUS ret;
+ String d;
+ int nLen;
+
+ if (encrypted.size() == 0)
+   return d;
+
+ ret = BCryptOpenAlgorithmProvider(&hAesAlg, BCRYPT_AES_ALGORITHM, NULL, 0);
+ if (ret < 0)
+   throw L"failed";
+
+ ret = BCryptGetProperty(hAesAlg, BCRYPT_OBJECT_LENGTH, (PBYTE)&cbKeyObject, sizeof(DWORD), &cbData, 0); 
+ if (ret < 0)
+   throw L"failed";
+
+ pbKeyObject = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbKeyObject);
+ if (pbKeyObject == nullptr)
+   throw L"failed";
+
+ ret = BCryptGetProperty(hAesAlg, BCRYPT_BLOCK_LENGTH, (PBYTE)&cbBlockLen, sizeof(DWORD), &cbData, 0);
+ if (ret < 0)
+   throw L"failed";
+
+ if (cbBlockLen > sizeof (rgbIV))
+   throw L"failed";
+
+ pbIV = (PBYTE) HeapAlloc (GetProcessHeap (), 0, cbBlockLen);
+  if(pbIV == nullptr)
+    throw L"faied";
+ 
+ memcpy(pbIV, rgbIV, cbBlockLen);
+
+ ret = BCryptSetProperty(hAesAlg, BCRYPT_CHAINING_MODE, (PBYTE)BCRYPT_CHAIN_MODE_CBC, sizeof(BCRYPT_CHAIN_MODE_CBC), 0);
+ if (ret < 0) 
+   throw L"failed";
+
+ ret = BCryptGenerateSymmetricKey(hAesAlg, &hKey, pbKeyObject, cbKeyObject, (PBYTE)rgbAES128Key, sizeof(rgbAES128Key), 0);
+ if (ret < 0)
+   throw L"failed";
+
+ cbPlainText = encrypted.size();
+ pbPlainText = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbPlainText);
+ if (pbPlainText == nullptr)
+   throw L"failed";
+
+ cbCipherText = encrypted.size();
+ pbCipherText = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbCipherText);
+ for (ic = 0; ic < encrypted.size(); ic++)
+   pbCipherText[ic] = encrypted[ic];
+
+ ret = BCryptDecrypt(hKey, pbCipherText, cbCipherText, NULL, pbIV, cbBlockLen, pbPlainText, cbPlainText, &cbPlainText, BCRYPT_BLOCK_PADDING);
+ if (ret < 0)
+   throw L"failed";
+
+ nLen = cbPlainText / sizeof(wchar_t);
+
+ outputBuff = new wchar_t[nLen];
+ memcpy(outputBuff, pbPlainText, cbPlainText);
+ for(int i=0; i<nLen;i++)
+  d += outputBuff[i];
+ delete [] outputBuff;
+
+
+ if (hAesAlg)
+   BCryptCloseAlgorithmProvider(hAesAlg,0);
+    
+ if (hKey)    
+   BCryptDestroyKey(hKey);
+    
+
+ if (pbCipherText)
+   HeapFree(GetProcessHeap(), 0, pbCipherText);
+   
+ if (pbPlainText)
+   HeapFree(GetProcessHeap(), 0, pbPlainText);
+    
+ if (pbKeyObject)
+   HeapFree(GetProcessHeap(), 0, pbKeyObject);
+
+ if (pbIV)
+  HeapFree(GetProcessHeap(), 0, pbIV);
+
+ return d;
+}
 
 // //////////////////////////////////////////////////////////
 
@@ -522,6 +741,49 @@ void AWnd::SetSize(Size const &sz)
 
  ::SetWindowPos(m_hWnd, 0, 0, 0, sz.Width, sz.Height, SWP_NOZORDER | SWP_NOMOVE);
 }
+
+SizeF AWnd::MeasureString(String const &val, Gdiplus::Font *font)
+{
+ Gdiplus::StringFormat *format;
+ HDC hDC;
+ RectF brct, box;
+ INT chars, lines; 
+
+ format = new Gdiplus::StringFormat();
+ format->SetAlignment(StringAlignment::StringAlignmentNear);
+ format->SetFormatFlags(StringFormatFlagsNoWrap);
+ format->SetLineAlignment(StringAlignmentNear);
+  
+ hDC = ::CreateCompatibleDC(0);
+  {
+   Gdiplus::Graphics g(hDC);
+   brct = RectF(0, 0, 1920, 1200);
+   g.MeasureString(val.Chars(), (INT)val.Length(), font, brct, format, &box,  &chars, &lines);
+  }
+ ::DeleteDC(hDC);
+ delete format;
+
+ return SizeF(box.Width, box.Height);
+}
+
+SizeF AWnd::MeasureString(String const &val, HFONT hFont)
+{
+ HFONT old;
+ HDC hDC;
+ SIZE sz;
+
+ hDC = ::CreateCompatibleDC(0);
+ old = SelectFont(hDC, hFont); 
+ 
+ GetTextExtentPoint32(hDC, val.Chars(), (int)val.Length(), &sz);
+
+ SelectFont(hDC, old);  
+
+ ::DeleteDC(hDC);
+
+ return SizeF(sz.cx, sz.cy);
+}
+
 
 void AWnd::Border(bool onoff)
 {
@@ -774,7 +1036,8 @@ bool PopUpWnd::Create(String const &className, int nCmdShow)
  if (m_hWnd==0)
   {
    String err = String::GetLastErrorMsg(GetLastError());
-   throw err.Chars();
+   ::MessageBox(0, err.Chars(), L"", MB_OK | MB_ICONEXCLAMATION);
+   return false;
   }
 
  ::DwmSetWindowAttribute(m_hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dmValue, sizeof(dmValue));
@@ -1733,6 +1996,12 @@ WMR PanelWnd::MessageHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
      ::SendMessage(m_Parent->Handle(), WM_PANELWNDCLICKED, (WPARAM)m_hWnd, (LPARAM)&e);
      ret = WMR::Zero;
     } break;
+   case WM_MOUSEWHEEL:
+    {
+     MouseEventArgs e(m_hWnd, wParam, lParam, MouseEventArgs::DoubleClick::None, GET_WHEEL_DELTA_WPARAM(wParam));
+     OnMouseWheel(e);
+     ret = WMR::Zero;
+    } break;
    case WM_PANELWNDCLICKED:
       OnPanelClick((HWND)wParam, MouseEventArgs((MouseEventArgs *)lParam));
       ret = WMR::Zero;
@@ -1753,6 +2022,22 @@ WMR PanelWnd::MessageHandler(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPar
   }
  return ret;
 }
+
+void PanelWnd::DrawRectangle(HDC hDC, HPEN hPen, int x, int y, int w, int h)
+{
+ POINT pt;
+ HPEN hOld = SelectPen(hDC, hPen);
+
+ ::MoveToEx(hDC, x, y, &pt);
+
+ ::LineTo(hDC, x+w, y);   // top
+ ::LineTo(hDC, x+w, y+h); // right
+ ::LineTo(hDC, x, y+h);   // bottom
+ ::LineTo(hDC, x, y);     // left
+
+ ::MoveToEx(hDC, pt.x, pt.y, nullptr);
+}
+
 // /////////////////////////////////////////////////
 
 ImageWnd::ImageWnd()
@@ -3304,6 +3589,12 @@ WMR ADialog::MessageHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
      OnMouseDown(e);
      ret = WMR::Zero;
     } break;
+   case WM_MOUSEWHEEL:
+    {
+     MouseEventArgs e(m_hWnd, wParam, lParam, MouseEventArgs::DoubleClick::None, GET_WHEEL_DELTA_WPARAM(wParam));
+     OnMouseWheel(e);
+     ret = WMR::Zero;
+    } break;
    case WM_KEYDOWN:
     {
      KeyEventArgs k(wParam, lParam);
@@ -3499,46 +3790,14 @@ void StatusBarPane::SetMax(int m)
  m_Value = 0;
 }
 
-//bool StatusBarPane::SetValue(int val)
-//{
-// double ratio;
-// int v, chrs;
-//
-// if (val < 0 || val > m_Max) throw L"value out of range"; 
-//
-// v = (int)((double)val * m_ValueInc);
-//
-// if (v != m_LastValue)
-//  {
-//   m_LastValue = v;
-//   ratio = (double)m_Value / (double)m_Max;
-//   chrs = (double)(m_Width / m_CharWidth)*ratio;
-//   
-//   return true;
-//  }
-// return false;
-//}
-//
-//void StatusBarPane::Paint(DRAWITEMSTRUCT *dis)
-//{
-// HPEN pen, old;
-// RECT rct;
-// Rect r = AWnd::ClientRect(dis->hwndItem);
-//
-// ::FillRect(dis->hDC, &dis->rcItem, ::GetSysColorBrush(COLOR_WINDOW));
-//
-// pen = ::CreatePen(PS_SOLID, 1, ::GetSysColor(COLOR_WINDOWTEXT));
-// old = SelectPen(dis->hDC, pen);
-//
-// ::MoveToEx(dis->hDC, dis->rcItem.left, dis->rcItem.top, nullptr);
-// ::LineTo(dis->hDC, dis->rcItem.right-3, dis->rcItem.top);
-// ::LineTo(dis->hDC, dis->rcItem.right-3, dis->rcItem.bottom-2);
-// ::LineTo(dis->hDC, dis->rcItem.left, dis->rcItem.bottom-2);
-// ::LineTo(dis->hDC, dis->rcItem.left, dis->rcItem.top);
-//
-// SelectPen(dis->hDC, old);
-// DeletePen(pen);
-//}
+void StatusBarPane::Clear()
+{
+ m_Value = 0;
+ m_Max = 0;
+ m_LastValue=0;
+ m_LastCharCount=0;
+}
+
 
 // /////////////////////////////////////////////////////
 
@@ -3579,7 +3838,7 @@ void StatusBar::Create(AWnd *parent)
  HFONT font  = (HFONT)::SendMessage(m_hWnd, WM_GETFONT, 0, 0);
  
  prog = L"\x25A0"; 
- sz = prog.MeasureString(font);
+ sz = MeasureString(prog, font);
  m_CharWidth = sz.Width;
 
  SetWidths();
@@ -3816,6 +4075,30 @@ void StatusBar::OnDrawItem(DRAWITEMSTRUCT *dis)
   }
 }
 
+void StatusBar::Clear(int pane)
+{
+ LPARAM lParam;
+ WPARAM wParam;
+
+ if (pane>=Panes.size()) throw L"pane out of bounds";
+ Panes[pane]->Clear();
+
+ if (Panes[pane]->GetContent() == StatusBarPane::Content::Text)
+  {
+   wParam = pane;
+   lParam = (LPARAM) L"";
+   ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); 
+  }
+ else
+  {
+   wParam = pane | SBT_OWNERDRAW; 
+   lParam = 0;
+   ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); // posts a WM_DRAWITEM to parent
+  }
+}
+
+// //////////////////////////////////////////////////
+
 ProgressBar::ProgressBar(StatusBar *bar, int pane)
 {
  m_SB = bar;
@@ -3887,11 +4170,33 @@ void ImageList::Create(ImageList::Style style, int width, int height, int initia
 void ImageList::Add(Bitmap *bmp, int pictureID)
 {
  HBITMAP hBmp;
+ int ret;
 
  bmp->GetHBITMAP(Color::White, &hBmp);
- ImageList_Add(m_Handle, hBmp , 0);
+
+ ret = ImageList_Add(m_Handle, hBmp , 0);
+ if (ret < 0)
+   throw L"Failed to add image";
+
  PictureMap.insert(std::pair<int, int>(pictureID, m_ImageIndex++));
  ::DeleteObject(hBmp);
+}
+
+void ImageList::Replace(Bitmap *bmp, int pictureID)
+{
+ HBITMAP hBmp;
+ int ndx;
+
+ #ifdef _DEBUG
+  if (PictureMap.count(pictureID) == 0) throw L"PictureID not found";
+ #endif
+
+ ndx = PictureMap[pictureID];
+
+ bmp->GetHBITMAP(Color::White, &hBmp);
+ ImageList_Replace(m_Handle, ndx, hBmp , 0);
+ ::DeleteObject(hBmp);
+
 }
 
 void ImageList::AddMasked(int bmpID, COLORREF mask)
@@ -3931,6 +4236,11 @@ int ImageList::GetIndex(int pictureID)
    throw L"map didn't contain picture id";
 #endif
  return PictureMap.at(pictureID);
+}
+
+void ImageList::Paint(HDC hDC, int image, int x, int y)
+{
+ ImageList_Draw(m_Handle, PictureMap[image], hDC, x, y, ILD_IMAGE);
 }
 
 /////////////////////////////////////////////////////////
@@ -4175,4 +4485,248 @@ void WaitCursor::EndWait()
    ::SetCursor(m_CurrentCursor);
    m_CurrentCursor = 0;
   }
+}
+
+//////////////////////////////////////////////
+
+void ScrollBar::Create(AWnd *parent, Orientation orient)
+{
+ String err;
+ HWND hWnd;
+ DWORD style;
+ int w, h;
+ int size;      // height of horizontal,  width of vertical
+ 
+ m_Orient = orient;
+
+ style=WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT;
+
+ size = 20;
+
+ if (orient == Orientation::Horz)
+  {
+   w = 100;
+   h = size;
+   style |= SBS_HORZ;
+  }
+ else
+  {
+   w = size;
+   h = 100;
+   style |= SBS_VERT;
+  }
+
+ hWnd=::CreateWindowEx(0, L"SCROLLBAR", L"", style, 0, 0, w, h, parent->Handle(), (HMENU)0, AWndApp->Instance(), 0);
+ if (hWnd==0)
+  {
+   err=String::GetLastErrorMsg(::GetLastError());
+   throw L"create window failed";
+  }
+ CreateWnd(parent, hWnd, L"SCROLLBAR", 0);
+
+ ::ShowWindow(hWnd, SW_SHOW);
+}
+
+void ScrollBar::Attach(ADialog *dlg, int childID, Orientation orient)
+{
+
+ m_Orient = orient;
+
+ AWnd::Attach(dlg, childID);
+}
+
+void ScrollBar::SetRange(int minimum, int maximum)
+{
+ BOOL ret;
+ int min, max;
+
+ if (minimum < 0) 
+   min = 0;
+ else
+   min = minimum;
+
+ if (maximum < 0)
+   max = 0;
+ else
+   max = maximum;
+
+ ret = SetScrollRange(m_hWnd, SB_CTL, min, max, TRUE);
+ if (ret == FALSE)
+   throw L"Failed to set scrollbar range";
+}
+
+void ScrollBar::SetPageAmount(int page)
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_PAGE;
+ info.nPage = page;
+ ::SetScrollInfo(m_hWnd, SB_CTL, &info, TRUE);
+}
+
+int ScrollBar::PageUp()
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_ALL;
+
+ ::GetScrollInfo(m_hWnd, SB_CTL, &info);
+
+ pos = info.nPos - info.nPage;
+
+ if (pos < info.nMin)
+   pos = info.nMin;
+
+ info.fMask = SIF_POS;
+ info.nPos = pos;
+ ::SetScrollInfo(m_hWnd, SB_CTL, &info, TRUE); 
+ 
+ return pos;
+}
+
+int ScrollBar::PageDown()
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_ALL;
+
+ ::GetScrollInfo(m_hWnd, SB_CTL, &info);
+
+ pos = info.nPos + info.nPage;
+
+ if (pos > info.nMax)
+   pos = info.nMax;
+
+ info.fMask = SIF_POS;
+ info.nPos = pos;
+ ::SetScrollInfo(m_hWnd, SB_CTL, &info, TRUE); 
+
+ return pos;
+}
+
+int ScrollBar::LineUp(int amount)
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_ALL;
+
+ ::GetScrollInfo(m_hWnd, SB_CTL, &info);
+
+ pos = info.nPos - amount;
+
+ if (pos < info.nMin)
+   pos = info.nMin;
+
+ info.fMask = SIF_POS;
+ info.nPos = pos;
+ ::SetScrollInfo(m_hWnd, SB_CTL, &info, TRUE); 
+
+ return pos;
+}
+
+int ScrollBar::LineDown(int amount)
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_ALL;
+
+ ::GetScrollInfo(m_hWnd, SB_CTL, &info);
+
+ pos = info.nPos + amount;
+
+ if (pos > info.nMax)
+   pos = info.nMax;
+
+ info.fMask = SIF_POS;
+ info.nPos = pos;
+ ::SetScrollInfo(m_hWnd, SB_CTL, &info, TRUE); 
+
+ return pos;
+}
+
+int ScrollBar::GetPosition(WPARAM wParam)
+{
+ return CalcPosition(wParam);
+}
+
+void ScrollBar::SetPosition(WPARAM wParam, int newPosition)
+{
+ SCROLLINFO info={};
+
+ if (LOWORD(wParam) != SB_ENDSCROLL)
+  {
+   info.cbSize = sizeof(SCROLLINFO);
+   info.fMask = SIF_POS;
+   info.nPos = newPosition;
+   ::SetScrollInfo(m_hWnd, SB_CTL, &info, TRUE);
+  }
+}
+
+int ScrollBar::GetCurrentPosition()
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_POS;
+ ::GetScrollInfo(m_hWnd, SB_CTL, &info);
+ 
+ return info.nPos;
+}
+
+int ScrollBar::CalcPosition(WPARAM wParam)
+{
+ SCROLLINFO info={};
+ int pos;
+
+ info.cbSize = sizeof(SCROLLINFO);
+ info.fMask = SIF_ALL;
+ ::GetScrollInfo(m_hWnd, SB_CTL, &info);
+
+ switch(LOWORD(wParam))
+  {
+   case SB_BOTTOM:        // used to be able to right click scroll bar and select top or bottom
+     pos = info.nMax;
+     break;
+   case SB_TOP:
+     pos = info.nMin;
+     break;
+   case SB_LINEDOWN:
+     pos = info.nPos + 1;
+     break;
+   case SB_LINEUP:
+     pos = info.nPos - 1;
+     break;
+   case SB_PAGEDOWN:
+     pos = info.nPos + info.nPage;
+     break;
+   case SB_PAGEUP:
+     pos = info.nPos - info.nPage;
+     break;
+   case SB_THUMBPOSITION:  // Mouse released after a track
+     pos = info.nTrackPos;
+     break;
+   case SB_THUMBTRACK:     // Mouse down thumb is moving
+     pos = info.nTrackPos;
+     break;
+   default:
+     pos = info.nPos;
+  }
+
+ if (pos < info.nMin)
+   pos = info.nMin;
+ if (pos > info.nMax)
+   pos = info.nMax;
+
+ return pos;
 }
