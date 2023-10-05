@@ -3814,6 +3814,7 @@ StatusBar::~StatusBar()
 
 void StatusBar::Create(AWnd *parent)
 {
+ AFileTextOut logFile;
  String prog;
  Rect rct;
  SizeF sz;
@@ -3824,24 +3825,40 @@ void StatusBar::Create(AWnd *parent)
  int childId = 0;
  int i;
 
+ prog = AWndApp->AppLocalPath();
+ prog += L"\\StatusBarCreate.log";
+ logFile.Open(prog);
+
+ logFile.Write(L"Start");
+
  if (Panes.size() == 0) throw L"No panes added prior to creation";
+
+ logFile.Write(L"Create Pen");
 
  m_hPen = ::CreatePen(PS_SOLID, 1, ::GetSysColor(COLOR_WINDOWTEXT));
 
  fstyle= WS_CHILD | WS_VISIBLE | WS_BORDER | SBARS_SIZEGRIP; 
 
+ logFile.Write(L"CreateWindowEx()");
+
  hWnd = CreateWindowEx(0, STATUSCLASSNAME, L"", fstyle, 0, 0, 0, 0, parent->Handle(), (HMENU)childId,AWndApp->Instance(), NULL);
  rct = parent->ClientRect();   // Get the coordinates of the parent window's client area.
+
+ logFile.Write(L"CreateWnd()");
 
  CreateWnd(parent, hWnd, STATUSCLASSNAME, childId);
 
  HFONT font  = (HFONT)::SendMessage(m_hWnd, WM_GETFONT, 0, 0);
  
- prog = L"\x25A0"; 
+ prog = L"\x25A0"; // square looking thing
  sz = MeasureString(prog, font);
  m_CharWidth = sz.Width;
 
+ logFile.Write(L"SetWidths()");
+
  SetWidths();
+
+ logFile.Write(L"Set texts of panes");
 
  i = 0;
  for (const auto &pane : Panes)
@@ -3860,7 +3877,12 @@ void StatusBar::Create(AWnd *parent)
     }
    i++;
   }
+
+ logFile.Write(L"ShowWindow()");
+
  ::ShowWindow(hWnd, SW_SHOW);
+
+ logFile.Write(L"Success");
 }
 
 void StatusBar::AddFixedPane(StatusBarPane::Content content, int width)
@@ -3890,29 +3912,41 @@ void StatusBar::AddAutoPane(StatusBarPane::Content content)
 
 void StatusBar::SetWidths()
 {
+ AFileTextOut log;
+ String f;
  int *Parts;
  int w;
  int ac;
  int i;
  int sz;
 
+ f = AWndApp->AppLocalPath();
+ f += L"\\StatusBarSetWidths.log";
+ log.Open(f);
+
  w = ClientRect().Width;
  ac = 0;
  sz = (int)Panes.size();
 
+ log.Write(L"Loop 1");
+
  for(const auto &pane : Panes)
   {
-   if ( pane->GetStyle()==StatusBarPane::Style::Fixed)
+   if ( pane->GetStyle()==StatusBarPane::Style::Fixed) // accumulate all fixed with panes
      ac+=pane->GetWidth();
   }
+
+ log.Write(L"Loop 2");
+
  for(const auto &pane : Panes)
   {
-   if ( pane->GetStyle()==StatusBarPane::Style::AutoSize)
+   if ( pane->GetStyle()==StatusBarPane::Style::AutoSize) // autosize gets what is left over
      pane->SetWidth(w-ac);
   }
 
- Parts = new int[sz];
+ log.Write(L"Loop 3");
 
+ Parts = new int[sz];
  w = 0;
  i = 0;
  for (const auto &pane : Panes)
@@ -3922,10 +3956,13 @@ void StatusBar::SetWidths()
   }
  Parts[sz-1] = -1;  // last pane extends to the status bar border
 
+ log.Write(L"Send Message");
+
  // Tell the status bar to create the window parts.
  ::SendMessage(m_hWnd, SB_SETPARTS, (WPARAM)sz, (LPARAM)Parts);
  delete [] Parts;
 
+ log.Write(L"Success");
 }
 
 void StatusBar::SetText(int pane, String const &txt)
@@ -4043,7 +4080,8 @@ void StatusBar::OnDrawItem(DRAWITEMSTRUCT *dis)
  String txt;
 
  pane = dis->itemID;
- if (pane>=Panes.size()) throw L"pane out of bounds"; 
+ if (pane >= Panes.size()) 
+   return; // just return 
 
  if (Panes[pane]->GetContent() == StatusBarPane::Content::Progress) 
   {
