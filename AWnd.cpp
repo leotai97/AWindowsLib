@@ -7,7 +7,12 @@ Application::Application()
 {
  m_hInst=0;
  m_Main = nullptr;
+ m_gdiplusToken = 0;
+
  AWndApp = this;
+
+ 
+ 
 
  #ifdef _DEBUG
 
@@ -195,7 +200,7 @@ String Application::GetClipboardText()
      pAscii = static_cast<char *>( GlobalLock(hData));
      if (pAscii != nullptr)
       {
-       c = strlen(pAscii);
+       c = (int)strlen(pAscii);
        for(i=0; i<c; i++)
         {
          out+=(wchar_t)pAscii[i];
@@ -497,12 +502,12 @@ String Application::Decrypt(std::vector<BYTE>const &encrypted)
  if (ret < 0)
    throw L"failed";
 
- cbPlainText = encrypted.size();
+ cbPlainText = (DWORD)encrypted.size();
  pbPlainText = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbPlainText);
  if (pbPlainText == nullptr)
    throw L"failed";
 
- cbCipherText = encrypted.size();
+ cbCipherText = (DWORD)encrypted.size();
  pbCipherText = (PBYTE)HeapAlloc (GetProcessHeap (), 0, cbCipherText);
  for (ic = 0; ic < encrypted.size(); ic++)
    pbCipherText[ic] = encrypted[ic];
@@ -900,10 +905,6 @@ void AWnd::Show()
 
 void AWnd::CreateWnd(AWnd *parent, HWND hWnd, String const &wcls, int childId)
 {
-
- //if (hParent == 0)             LoginDlg appears before MainWnd
- //  throw L"Parent HWND = 0";
-
  if (hWnd == 0)
    throw L"HWND = 0"; 
 
@@ -1161,7 +1162,7 @@ void PopUpWnd::ActivateWindow()
  ::SetActiveWindow(m_hWnd);
 }
 
-void PopUpWnd::SetMenu(AMenu const &menu)
+void PopUpWnd::SetPopUpMenu(AMenu const &menu)
 {
  ::SetMenu(m_hWnd, menu.MenuHandle());
 }
@@ -1288,7 +1289,7 @@ void MenuItem::AddMenu(int id, String const &txt, bool checked, bool enabled, in
  if (::AppendMenu(m_hMenu, flags, id, txt.Chars()) == FALSE)
    throw L"failed";
 
- pos = Items.size();
+ pos = (int)Items.size();
 
  Index.insert(std::pair<int, int>(id, pos));
  Items.insert(std::pair<int, MenuItem>(pos, MenuItem(this, txt, id, pos)));
@@ -1304,7 +1305,7 @@ void MenuItem::Separator()
  if (::AppendMenu(m_hMenu, flags, 0, L"-") == FALSE)
    throw L"failed";
 
- pos = Items.size();
+ pos = (int)Items.size();
  
  Items.insert(std::pair<int, MenuItem>(pos, MenuItem(this, L"-", 0, pos)));
 }
@@ -1333,7 +1334,7 @@ MenuItem *MenuItem::SubMenu(int id, String const &txt)
  if (::AppendMenu(m_hMenu, flags, (int)hSubMenu, txt.Chars()) == FALSE)
    throw L"failed";
 
- pos = Items.size();
+ pos = (int)Items.size();
 
  item = MenuItem(this, hSubMenu, txt, id, pos);
 
@@ -2169,6 +2170,7 @@ SplitterWnd::SplitterWnd() : AWnd()
  m_Window2=Rect();
  m_Capturing=false;
  m_SplitWidth=7;
+ m_Ratio = 0.0;
  m_hSolidBrush=0;
  m_hNubPen=0;
 }
@@ -2604,6 +2606,7 @@ ListView::ListView()
 {
  m_ColumnCount=0;
  m_TurnOffNotify = false;
+ m_ImageList = nullptr;
  m_Owner = nullptr;
 }
 
@@ -3392,8 +3395,11 @@ void TreeView::SetImageList(ImageList *imgList)
 ADialog::ADialog()
 {
  m_Result=DialogResult::None;
+ m_CustomResult = 0;
+ m_UnitRatio = 0.0;
  m_DialogID = 0;
  m_hShowParent = 0;
+ m_DialogID = 0;
 }
 
 ADialog::~ADialog()
@@ -3775,6 +3781,9 @@ StatusBarPane::StatusBarPane(StatusBarPane::Content content, StatusBarPane::Styl
  m_Value=0;
  m_Max=0;
  m_LastValue=0;
+ m_LastCharCount = 0;   // didn't init this and it caused many a lock up until I figured it out
+
+ m_Text = L"";
 }
 
 StatusBarPane::~StatusBarPane()
@@ -3796,6 +3805,7 @@ void StatusBarPane::Clear()
  m_Max = 0;
  m_LastValue=0;
  m_LastCharCount=0;
+ m_Text.Clear();
 }
 
 
@@ -3804,85 +3814,42 @@ void StatusBarPane::Clear()
 StatusBar::StatusBar()
 {
  m_hPen = 0;
+ m_hBG = 0;
+ m_CharWidth = 0;
+ m_Height = 21;
 }
 
 StatusBar::~StatusBar()
 {
  if (m_hPen != 0)
    DeletePen(m_hPen);
+ if (m_hFont != 0)
+   DeleteFont(m_hFont);
+ if (m_hBG != 0)
+   DeleteBrush(m_hBG);
 }
 
-void StatusBar::Create(AWnd *parent)
+void StatusBar::CreateSB(AWnd *parent)
 {
- AFileTextOut logFile;
  String prog;
- Rect rct;
+ Rect rct, rctP;
  SizeF sz;
- DWORD fstyle;
- HWND hWnd;
- LPARAM lParam;
- WPARAM wParam;
- int childId = 0;
- int i;
-
- prog = AWndApp->AppLocalPath();
- prog += L"\\StatusBarCreate.log";
- logFile.Open(prog);
-
- logFile.Write(L"Start");
 
  if (Panes.size() == 0) throw L"No panes added prior to creation";
 
- logFile.Write(L"Create Pen");
-
  m_hPen = ::CreatePen(PS_SOLID, 1, ::GetSysColor(COLOR_WINDOWTEXT));
+ m_hBG = ::CreateSolidBrush(RGB(0xB0, 0xC4, 0xDE));  // light blue
 
- fstyle= WS_CHILD | WS_VISIBLE | WS_BORDER | SBARS_SIZEGRIP; 
+ rctP = parent->GetRect();
+ rct = Rect(0, rctP.Height - m_Height, rctP.Width, m_Height); 
 
- logFile.Write(L"CreateWindowEx()");
-
- hWnd = CreateWindowEx(0, STATUSCLASSNAME, L"", fstyle, 0, 0, 0, 0, parent->Handle(), (HMENU)childId,AWndApp->Instance(), NULL);
- rct = parent->ClientRect();   // Get the coordinates of the parent window's client area.
-
- logFile.Write(L"CreateWnd()");
-
- CreateWnd(parent, hWnd, STATUSCLASSNAME, childId);
-
- HFONT font  = (HFONT)::SendMessage(m_hWnd, WM_GETFONT, 0, 0);
+ PanelWnd::Create(parent, rct);
  
  prog = L"\x25A0"; // square looking thing
- sz = MeasureString(prog, font);
- m_CharWidth = sz.Width;
-
- logFile.Write(L"SetWidths()");
+ sz = MeasureString(prog, m_hFont);
+ m_CharWidth = (int)sz.Width;
 
  SetWidths();
-
- logFile.Write(L"Set texts of panes");
-
- i = 0;
- for (const auto &pane : Panes)
-  {
-   if (pane->GetContent() == StatusBarPane::Content::Text)
-    {
-     wParam = i;
-     lParam = (LPARAM) L"Text Pane";
-     ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); 
-    }
-   else
-    {
-     wParam = i | SBT_OWNERDRAW; 
-     lParam = 0;
-     ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); // posts a WM_DRAWITEM to parent
-    }
-   i++;
-  }
-
- logFile.Write(L"ShowWindow()");
-
- ::ShowWindow(hWnd, SW_SHOW);
-
- logFile.Write(L"Success");
 }
 
 void StatusBar::AddFixedPane(StatusBarPane::Content content, int width)
@@ -3907,28 +3874,22 @@ void StatusBar::AddAutoPane(StatusBarPane::Content content)
 
  item=new StatusBarPane(content, StatusBarPane::Style::AutoSize);
  Panes.push_back(item);
- m_Panels++;
 }
 
 void StatusBar::SetWidths()
 {
- AFileTextOut log;
  String f;
- int *Parts;
  int w;
  int ac;
- int i;
  int sz;
 
- f = AWndApp->AppLocalPath();
- f += L"\\StatusBarSetWidths.log";
- log.Open(f);
-
+ sz = (int)Panes.size();
+ if (sz == 0)
+   return;
+ 
  w = ClientRect().Width;
  ac = 0;
- sz = (int)Panes.size();
 
- log.Write(L"Loop 1");
 
  for(const auto &pane : Panes)
   {
@@ -3936,84 +3897,63 @@ void StatusBar::SetWidths()
      ac+=pane->GetWidth();
   }
 
- log.Write(L"Loop 2");
-
  for(const auto &pane : Panes)
   {
    if ( pane->GetStyle()==StatusBarPane::Style::AutoSize) // autosize gets what is left over
      pane->SetWidth(w-ac);
   }
 
- log.Write(L"Loop 3");
-
- Parts = new int[sz];
- w = 0;
- i = 0;
- for (const auto &pane : Panes)
-  { 
-   w += pane->GetWidth();
-   Parts[i++] = w; 
-  }
- Parts[sz-1] = -1;  // last pane extends to the status bar border
-
- log.Write(L"Send Message");
-
- // Tell the status bar to create the window parts.
- ::SendMessage(m_hWnd, SB_SETPARTS, (WPARAM)sz, (LPARAM)Parts);
- delete [] Parts;
-
- log.Write(L"Success");
+ Refresh();
 }
 
 void StatusBar::SetText(int pane, String const &txt)
 {
- WPARAM wParam;
- LPARAM lParam;
+ if (pane < 0 || pane >= Panes.size()) throw L"pane out of bounds";
 
- if (pane >= Panes.size()) throw L"pane out of bounds";
-
- wParam = pane;
- lParam = (LPARAM)txt.Chars();
- ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); 
+ Panes[pane]->SetText(txt);
+ Refresh();
 }
 
 String StatusBar::GetText(int pane)
 {
- String out;
- wchar_t *chrs;
- int len;
 
  if (pane < 0 || pane >= Panes.size()) throw L"out of bounds";
 
- len = ::SendMessage(m_hWnd, SB_GETTEXTLENGTH, pane, 0);
- if (len == 0)
-   return out;
+ return Panes[pane]->GetText();
+}
 
- chrs = new wchar_t[len+1];
-
- ::SendMessage(m_hWnd, SB_GETTEXT, pane, (LPARAM)chrs);
-
- out = chrs;
- delete [] chrs;
- 
- return out;
+void StatusBar::Clear(int pane)
+{
+ if (pane < 0 || pane>=Panes.size()) throw L"pane out of bounds";
+ Panes[pane]->Clear();
+ Refresh();
 }
 
 int StatusBar::GetWidth(int pane)
 {
- RECT rct;
+ if (pane < 0 || pane >= Panes.size()) throw L"out of bounds";
 
- ::SendMessage(m_hWnd, SB_GETRECT, pane, (LPARAM)&rct);
- return rct.right - rct.left;
+ return Panes[pane]->GetWidth();
 }
 
-void StatusBar::OnSize(Rect const &r)
+void StatusBar::OnSize()
 {
- LPARAM lParam;
+ RECT rt;
+ int w,h;
+ Rect r, rct;
 
- lParam = MAKELPARAM( r.Height, r.Width);
- 
- ::SendMessage(m_hWnd, WM_SIZE, 0, lParam);
+ ::GetClientRect(m_Parent->Handle(), &rt);
+ r=Utility::GetRect(rt);
+
+ w = r.Width;
+ h = r.Height;
+
+ rct.X = 0;
+ rct.Y = h - m_Height;
+ rct.Width = w;
+ rct.Height = m_Height;
+
+ SetRect(rct);
 
  SetWidths();
 }
@@ -4022,34 +3962,34 @@ void StatusBar::ProgressMax(int pane, int max)
 {
  StatusBarPane::Content content;
 
- if (pane>=Panes.size()) throw L"pane out of bounds";
+ if (pane < 0 || pane>=Panes.size()) throw L"pane out of bounds";
  
  content = Panes[pane]->GetContent();
  if (content != StatusBarPane::Content::Progress) throw L"Not a progres bar";
  Panes[pane]->SetMax(max);
+ Refresh();
 }
 
 void StatusBar::Progress(int pane)
 {
  int val;
 
- if (pane>=Panes.size()) throw L"pane out of bounds";
+ if (pane < 0 || pane>=Panes.size()) throw L"pane out of bounds";
  if (Panes[pane]->GetContent() != StatusBarPane::Content::Progress) throw L"Not a progres bar"; 
 
  val = Panes[pane]->GetValue();
  if (val < Panes[pane]->GetMax())
    ProgressValue(pane, val+1); 
+ Refresh();
 }
 
 void StatusBar::ProgressValue(int pane, int val)
 {
  String progress;
- WPARAM wParam;
  double vr, mc;
  int chrs, w, cw;
 
-
- if (pane>=Panes.size()) throw L"pane out of bounds";
+ if (pane < 0 || pane>=Panes.size()) throw L"pane out of bounds";
  if (Panes[pane]->GetContent() != StatusBarPane::Content::Progress) throw L"Not a progres bar";
  if (val < 0 || val > Panes[pane]->GetMax()) throw L"value out of range"; 
 
@@ -4060,79 +4000,107 @@ void StatusBar::ProgressValue(int pane, int val)
    vr = (double)val / (double)Panes[pane]->GetMax();
    mc = (double)( w / cw ); // max number of progress chrs that will fit in pane
    chrs = (int)( mc * vr );
+   if (chrs > mc)
+     chrs = (int)mc;
    if (Panes[pane]->GetLastCharCount() != chrs)
     {
      Panes[pane]->SetLastCharCount(chrs);
-     wParam = pane | SBT_OWNERDRAW;
-     ::SendMessage(m_hWnd, SB_SETTEXT, wParam, 0); 
+     Refresh();
     }
   }
  Panes[pane]->SetValue(val);
 }
 
-void StatusBar::OnDrawItem(DRAWITEMSTRUCT *dis)
+void StatusBar::OnDrawItem(int pane, HDC hDC, Rect const &r)
 {
  COLORREF oldColor;
  HPEN hOldPen;
- RECT rct;
- Rect r;
- int pane, lcc;
+ HFONT hOldFont;
+ RECT rct, rctI;
+ int  lcc;
  String txt;
 
- pane = dis->itemID;
- if (pane >= Panes.size()) 
+ if (pane < 0 || pane >= Panes.size()) 
    return; // just return 
+
+ rctI.left = r.X;
+ rctI.right = r.X + r.Width;
+ rctI.top = r.Y;
+ rctI.bottom = r.Y + r.Height;
 
  if (Panes[pane]->GetContent() == StatusBarPane::Content::Progress) 
   {
+   oldColor = ::SetTextColor(hDC, RGB(0,200,0));
    lcc = Panes[pane]->GetLastCharCount();
-   r = AWnd::ClientRect(dis->hwndItem);
-
-   ::FillRect(dis->hDC, &dis->rcItem, ::GetSysColorBrush(COLOR_WINDOW));
-
-   txt = String::Repeat(L"\x25A0", lcc);
-   if (txt.Length() > 0)
-    {
-     oldColor = ::SetTextColor(dis->hDC, RGB(0,200,0));
-     rct.left = dis->rcItem.left+2;
-     rct.top = dis->rcItem.top+1;
-     rct.right = dis->rcItem.right;
-     rct.bottom = dis->rcItem.bottom;
-     ::DrawText(dis->hDC, txt.Chars(), txt.Length(), &rct, DT_TOP | DT_LEFT | DT_SINGLELINE);
-     ::SetTextColor(dis->hDC, oldColor);
-    }
-   hOldPen = SelectPen(dis->hDC, m_hPen);
-
-   ::MoveToEx(dis->hDC, dis->rcItem.left, dis->rcItem.top, nullptr);
-   ::LineTo(dis->hDC, dis->rcItem.right-3, dis->rcItem.top);
-   ::LineTo(dis->hDC, dis->rcItem.right-3, dis->rcItem.bottom-2);
-   ::LineTo(dis->hDC, dis->rcItem.left, dis->rcItem.bottom-2);
-   ::LineTo(dis->hDC, dis->rcItem.left, dis->rcItem.top);
-
-   SelectPen(dis->hDC, hOldPen);
-  }
-}
-
-void StatusBar::Clear(int pane)
-{
- LPARAM lParam;
- WPARAM wParam;
-
- if (pane>=Panes.size()) throw L"pane out of bounds";
- Panes[pane]->Clear();
-
- if (Panes[pane]->GetContent() == StatusBarPane::Content::Text)
-  {
-   wParam = pane;
-   lParam = (LPARAM) L"";
-   ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); 
+   if (lcc > 0)
+     txt = String::Repeat(L"\x25A0", lcc);
+   else
+     txt.Clear();
   }
  else
   {
-   wParam = pane | SBT_OWNERDRAW; 
-   lParam = 0;
-   ::SendMessage(m_hWnd, SB_SETTEXT, wParam, lParam); // posts a WM_DRAWITEM to parent
+   oldColor = ::SetTextColor(hDC, RGB(0,0,0));
+   txt = Panes[pane]->GetText();
   }
+ 
+  ::FillRect(hDC, &rctI, ::GetSysColorBrush(COLOR_WINDOW));
+ 
+  hOldFont = SelectFont(hDC, m_hFont);
+  rct.left = rctI.left+2;
+  rct.top = rctI.top+1;
+  rct.right = rctI.right;
+  rct.bottom = rctI.bottom;
+  ::DrawText(hDC, txt.Chars(), txt.Length(), &rct, DT_TOP | DT_LEFT | DT_SINGLELINE);
+  ::SetTextColor(hDC, oldColor);
+ 
+  hOldPen = SelectPen(hDC, m_hPen);
+
+ ::MoveToEx(hDC, rctI.left, rctI.top, nullptr);
+ ::LineTo(hDC, rctI.right-3, rctI.top);
+ ::LineTo(hDC, rctI.right-3, rctI.bottom-2);
+ ::LineTo(hDC, rctI.left, rctI.bottom-2);
+ ::LineTo(hDC, rctI.left, rctI.top);
+
+ SelectPen(hDC, hOldPen);
+ SelectFont(hDC, hOldFont);
+
+}
+
+void StatusBar::OnPaint(HDC hDC)
+{
+ HBITMAP hBmp, hOld;
+ HDC     hMemDC;
+ RECT r;
+ Size sz;
+ Rect rct, rctI;
+ int i, x;
+
+ rct = ClientRect();
+
+ hBmp = CreateCompatibleBitmap(hDC, rct.Width, rct.Height);
+ hMemDC = CreateCompatibleDC(hDC);
+ hOld = SelectBitmap(hMemDC, hBmp);
+
+ r.left = 0;
+ r.right = rct.Width;
+ r.top = 0;
+ r.bottom = rct.Height;
+ FillRect(hMemDC, &r, m_hBG);
+
+ x = rct.X; 
+
+ for(i=0; i<Panes.size(); i++)
+  {
+   rctI = Rect(x, rct.Y, Panes[i]->GetWidth(), rct.Height);
+   OnDrawItem(i, hMemDC, rctI);
+   x += Panes[i]->GetWidth();
+  }
+
+ BitBlt(hDC, 0, 0, rct.Width, rct.Height, hMemDC, 0, 0, SRCCOPY);
+
+ SelectBitmap(hMemDC, hOld);
+ DeleteBitmap(hBmp);
+ DeleteDC(hMemDC);
 }
 
 // //////////////////////////////////////////////////
@@ -4166,6 +4134,7 @@ ImageList::ImageList()
  m_Handle=0;
  m_Width=0;
  m_Height=0;
+ m_ImageIndex = 0;
 }
 
 ImageList::~ImageList()
@@ -4298,6 +4267,7 @@ void ToolBar::Create(AWnd *parent, int btns)
 
  ::SendMessage(m_hWnd, TB_SETIMAGELIST, 0, (LPARAM)m_Images.Handle());
 
+ m_Image = 0;
  m_Index = 0;
 }
 
@@ -4596,7 +4566,6 @@ void ScrollBar::SetRange(int minimum, int maximum)
 void ScrollBar::SetPageAmount(int page)
 {
  SCROLLINFO info={};
- int pos;
 
  info.cbSize = sizeof(SCROLLINFO);
  info.fMask = SIF_PAGE;
@@ -4713,7 +4682,6 @@ void ScrollBar::SetPosition(WPARAM wParam, int newPosition)
 int ScrollBar::GetCurrentPosition()
 {
  SCROLLINFO info={};
- int pos;
 
  info.cbSize = sizeof(SCROLLINFO);
  info.fMask = SIF_POS;

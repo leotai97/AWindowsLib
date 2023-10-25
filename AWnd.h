@@ -70,10 +70,12 @@ class Application
  std::map<HWND, AWnd *> m_ChildWindows;
  HINSTANCE m_hInst;
 
- ULONG_PTR m_gdiplusToken;
+ ULONG_PTR m_gdiplusToken;   // gdi system
  
- CLSID m_EncImagePNG;
- 
+ CLSID m_EncImagePNG;        // png encoder
+
+ // window class names 
+
  String m_SplitterVertWndClass;
  String m_SplitterHorzWndClass;
  String m_PanelWndClass;
@@ -83,11 +85,11 @@ class Application
  String m_AppName;
  String m_AppLocalPath;  // user "appdata" path
 
- std::vector<String> m_CustomClasses;
+ std::vector<String> m_CustomClasses;  // need to release them
 
- PopUpWnd *m_Main;
+ PopUpWnd *m_Main;    // app window
  
- bool m_DarkMode;
+ bool m_DarkMode;     // is dark mode or not
  
 };
 
@@ -191,6 +193,42 @@ class AWnd  // windows controls
  bool m_IsDialog;
 };
 
+////////////////////////////////////////////////////
+
+class AMenu;
+
+class PopUpWnd : public AWnd
+{
+ public:
+ PopUpWnd();
+~PopUpWnd();
+
+ virtual bool Create(String const &className, int nCmdShow);
+ virtual int Loop(int acceleratorID);
+ virtual int Loop();
+ Point GetCursor();
+ void ActivateWindow();
+
+ protected:
+
+ void SetPopUpMenu(AMenu const &menu); 
+
+
+ virtual bool OnClosing(){return true;}
+ virtual void OnSize(){};
+ virtual void OnPaint()=0;  // have to paint otherwise dialogs won't show
+ virtual WMR  MenuHandler(int menuID){ return WMR::Default; }
+ virtual void OnDrawItem(int childID, DRAWITEMSTRUCT *dis);
+ virtual WMR  OnMenuOpening(HMENU hMenu, int pos, bool bWindowMenu) { return WMR::Default; }
+ virtual WMR  OnContextMenu(HWND hChild, Point const &pt) { return WMR::Default; }
+ virtual WMR  OnCommand(int id, HWND hCtrl) { return WMR::Default; } // true if handled
+ virtual WMR  MessageHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) { return WMR::Default; }
+ static LRESULT CALLBACK PopUpWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
+ 
+};
+
+////////////////////////////////////////////////////
+
 class SubClassWnd : public AWnd
 {
  public:
@@ -256,8 +294,6 @@ class MenuItem
  protected:
 
  String m_MenuText;
-
- HMENU m_hParent;
  HMENU m_hMenu;    // 0 if menu item
  int   m_ID;   
  int   m_Position;    
@@ -312,40 +348,6 @@ class AMenu : public MenuItem
  void SetMenuText(int id, String const &txt);
 
 };
-
-////////////////////////////////////////////////////
-
-class PopUpWnd : public AWnd
-{
- public:
- PopUpWnd();
-~PopUpWnd();
-
- virtual bool Create(String const &className, int nCmdShow);
- virtual int Loop(int acceleratorID);
- virtual int Loop();
- Point GetCursor();
- void ActivateWindow();
-
- protected:
-
- void SetMenu(AMenu const &menu); 
-
-
- virtual bool OnClosing(){return true;}
- virtual void OnSize(){};
- virtual void OnPaint()=0;  // have to paint otherwise dialogs won't show
- virtual WMR  MenuHandler(int menuID){ return WMR::Default; }
- virtual void OnDrawItem(int childID, DRAWITEMSTRUCT *dis);
- virtual WMR  OnMenuOpening(HMENU hMenu, int pos, bool bWindowMenu) { return WMR::Default; }
- virtual WMR  OnContextMenu(HWND hChild, Point const &pt) { return WMR::Default; }
- virtual WMR  OnCommand(int id, HWND hCtrl) { return WMR::Default; } // true if handled
- virtual WMR  MessageHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) { return WMR::Default; }
- static LRESULT CALLBACK PopUpWndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
- 
-};
-
-
 
 ///////////////////////////////////////////////////
 
@@ -869,6 +871,8 @@ class StatusBarPane
  inline void SetValue(int v) { m_Value = v; }
  inline int GetLastCharCount() { return m_LastCharCount; }
  inline int GetMax() { return m_Max; }
+ inline void SetText(String const &txt) { m_Text = txt; }
+ inline String GetText() const { return m_Text; }
 
  void SetMax(int max);
 // bool SetValue(int v);
@@ -878,6 +882,8 @@ class StatusBarPane
  void Clear();
 
  protected:
+
+ String m_Text;
 
  Content m_Content;
  Style   m_Style;
@@ -892,16 +898,14 @@ class StatusBarPane
 };
 
 // ///////////////////////////////////////////////
-
-class StatusBar : public AWnd
+class StatusBar : public PanelWnd
 {
  public:
 
  StatusBar();
 ~StatusBar();
 
-
- void Create(AWnd *parent); // add panes before calling Create
+ void CreateSB(AWnd *parent); // add panes before calling Create
  void AddFixedPane(StatusBarPane::Content c, int width);
  void AddAutoPane(StatusBarPane::Content c);
 
@@ -913,23 +917,25 @@ class StatusBar : public AWnd
  void ProgressValue(int pane, int val);
  void Progress(int pane);
 
- void OnSize(Rect const &r);  // parent size has changed, need to resize
-
- virtual void OnDrawItem(DRAWITEMSTRUCT *dis);
+ void OnSize();  // parent size has changed, need to resize
 
  void Clear(int panel);
 
+ int GetSBHeight() { return m_Height; }
+
  protected:
+
+ void OnDrawItem(int pane, HDC hDC, Rect const &r);
+ virtual void OnPaint(HDC hDC);
 
  void SetWidths(); // set widths of panes
 
  std::vector<StatusBarPane *> Panes;
  
- int m_Panels; // count of panels passed to create
  int m_CharWidth;
-
+ int m_Height;
  HPEN m_hPen;
- 
+ HBRUSH m_hBG;
 };
 
 class ProgressBar
@@ -1028,6 +1034,8 @@ class ListItem
  String Text;
  int    Tag;
 };
+
+///////////////////////////////////////////////
 
 class ADropList : public AWnd
 {

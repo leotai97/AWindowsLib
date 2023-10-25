@@ -39,9 +39,13 @@ void KeyEventArgs::ClearValues()
  KeyCode=Keyboard::None;
  KeyValue=0;
  Shift=false;
+ Control=false;
+ Capslock=false;
+ Caps=false;
  Numlock=false;
  Alt=false;
  FirstPress=false;
+ FirstUp=false;
 }
 
 std::wstring KeyEventArgs::Numeric() const
